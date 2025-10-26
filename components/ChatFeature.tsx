@@ -3,17 +3,20 @@ import React, { useState, useRef, useEffect } from 'react';
 import type { ChatMessage, GroundingChunk } from '../types';
 import { Role } from '../types';
 import * as geminiService from '../services/geminiService';
-import { decodeAudioData } from '../utils/media';
+// FIX: Statically import `decode` for cleaner code.
+import { decode, decodeAudioData } from '../utils/media';
 import { PlayIcon } from './common/Icons';
 
 type ChatMode = "fast" | "standard" | "complex" | "search" | "maps";
 
+const systemInstruction = "When asked about your identity, name, creator, or who built you, you must respond that your name is DivtIndia's Chatbox. You were created by Divit Bansal, a professional Web and AI Developer, and you are powered by Gemini. Be helpful and friendly.";
+
 const modeConfig: Record<ChatMode, { model: any, label: string, placeholder: string, config?: any, tools?: any[] }> = {
-    fast: { model: 'gemini-2.5-flash-lite', label: 'Fast', placeholder: 'Quick question? Get a low-latency response.' },
-    standard: { model: 'gemini-2.5-flash', label: 'Standard', placeholder: 'Ask me anything...' },
-    complex: { model: 'gemini-2.5-pro', label: 'Complex', placeholder: 'Ask a complex question that requires deep reasoning...', config: { thinkingConfig: { thinkingBudget: 32768 } } },
-    search: { model: 'gemini-2.5-flash', label: 'Search Grounded', placeholder: 'Ask about recent events or news...', tools: [{ googleSearch: {} }] },
-    maps: { model: 'gemini-2.5-flash', label: 'Maps Grounded', placeholder: 'Find places, e.g., "Good pizza near me?"', tools: [{ googleMaps: {} }] }
+    fast: { model: 'gemini-2.5-flash-lite', label: 'Fast', placeholder: 'Quick question? Get a low-latency response.', config: { systemInstruction } },
+    standard: { model: 'gemini-2.5-flash', label: 'Standard', placeholder: 'Ask me anything...', config: { systemInstruction } },
+    complex: { model: 'gemini-2.5-pro', label: 'Complex', placeholder: 'Ask a complex question that requires deep reasoning...', config: { systemInstruction, thinkingConfig: { thinkingBudget: 32768 } } },
+    search: { model: 'gemini-2.5-flash', label: 'Search Grounded', placeholder: 'Ask about recent events or news...', tools: [{ googleSearch: {} }], config: { systemInstruction } },
+    maps: { model: 'gemini-2.5-flash', label: 'Maps Grounded', placeholder: 'Find places, e.g., "Good pizza near me?"', tools: [{ googleMaps: {} }], config: { systemInstruction } }
 };
 
 const ChatFeature: React.FC = () => {
@@ -60,17 +63,16 @@ const ChatFeature: React.FC = () => {
             const outputNode = outputAudioContext.createGain();
             outputNode.connect(outputAudioContext.destination);
 
-            const audioBytes = decodeAudioData(
-                (await import('../utils/media')).decode(audioBase64),
+            // FIX: Refactored to use async/await and avoid dynamic import for better readability.
+            const audioBuffer = await decodeAudioData(
+                decode(audioBase64),
                 outputAudioContext, 24000, 1
             );
             
-            audioBytes.then(buffer => {
-                const source = outputAudioContext.createBufferSource();
-                source.buffer = buffer;
-                source.connect(outputNode);
-                source.start();
-            });
+            const source = outputAudioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(outputNode);
+            source.start();
 
         } catch (e: any) {
             setError("TTS failed: " + e.message);

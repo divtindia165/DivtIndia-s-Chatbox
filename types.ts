@@ -4,6 +4,7 @@ export enum Feature {
   IMAGE = 'Image Tools',
   VIDEO = 'Video Tools',
   LIVE = 'Live Audio',
+  TRANSCRIPTION = 'Transcription',
 }
 
 export enum Role {

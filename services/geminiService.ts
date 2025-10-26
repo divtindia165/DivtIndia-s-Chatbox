@@ -10,6 +10,9 @@ if (!process.env.API_KEY) {
 
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
+const systemInstruction = "When asked about your identity, name, creator, or who built you, you must respond that your name is DivtIndia's Chatbox. You were created by Divit Bansal, a professional Web and AI Developer, and you are powered by Gemini. Be helpful and friendly.";
+
+
 // --- TEXT & CHAT ---
 export const generateText = async (
     prompt: string,
@@ -18,14 +21,15 @@ export const generateText = async (
     tools?: any[]
 ): Promise<GenerateContentResponse> => {
     const ai = getAI();
-    // FIX: The 'tools' parameter should be nested inside the 'config' object.
+    // FIX: The 'tools' property must be nested inside the 'config' object for the generateContent call.
+    const finalConfig = { ...config };
+    if (tools) {
+        finalConfig.tools = tools;
+    }
     return ai.models.generateContent({
         model,
         contents: prompt,
-        config: (config || tools) ? {
-            ...config,
-            ...(tools && { tools }),
-        } : undefined,
+        config: finalConfig,
     });
 };
 
@@ -56,6 +60,7 @@ export const analyzeImage = async (prompt: string, imageBase64: string, mimeType
     return ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: { parts: [imagePart, textPart] },
+        config: { systemInstruction },
     });
 };
 
@@ -132,6 +137,7 @@ export const analyzeVideo = async (prompt: string, videoBase64: string, mimeType
     return ai.models.generateContent({
         model: 'gemini-2.5-pro',
         contents: { parts: [videoPart, textPart] },
+        config: { systemInstruction },
     });
 };
 

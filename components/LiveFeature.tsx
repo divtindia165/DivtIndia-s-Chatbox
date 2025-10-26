@@ -1,25 +1,15 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import * as geminiService from '../services/geminiService';
-import { fileToBase64, encode, decode, decodeAudioData } from '../utils/media';
-import { GoogleGenAI, LiveServerMessage, Modality, Blob } from '@google/genai';
+import { encode, decode, decodeAudioData } from '../utils/media';
+import { LiveServerMessage, Modality, Blob } from '@google/genai';
 import { MicIcon, StopIcon } from './common/Icons';
 
-type LiveMode = 'conversation' | 'transcribe';
-
 const LiveFeature: React.FC = () => {
-    const [mode, setMode] = useState<LiveMode>('conversation');
     const [isRecording, setIsRecording] = useState(false);
-    const [isTranscribing, setIsTranscribing] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [transcription, setTranscription] = useState('');
     const [conversationHistory, setConversationHistory] = useState<{user: string, model: string}[]>([]);
     
-    // For transcription
-    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-    const audioChunksRef = useRef<globalThis.Blob[]>([]);
-
-    // For live conversation
     const sessionPromiseRef = useRef<Promise<any> | null>(null);
     const inputAudioContextRef = useRef<AudioContext | null>(null);
     const outputAudioContextRef = useRef<AudioContext | null>(null);
@@ -40,18 +30,17 @@ const LiveFeature: React.FC = () => {
             micStreamRef.current = null;
         }
         if(inputAudioContextRef.current && inputAudioContextRef.current.state !== 'closed'){
-            inputAudioContextRef.current.close();
+            inputAudioContextRef.current.close().catch(console.error);
             inputAudioContextRef.current = null;
         }
         if(outputAudioContextRef.current && outputAudioContextRef.current.state !== 'closed'){
-            outputAudioContextRef.current.close();
+            outputAudioContextRef.current.close().catch(console.error);
             outputAudioContextRef.current = null;
         }
         setIsRecording(false);
     }, []);
 
     useEffect(() => {
-        // Cleanup on component unmount
         return () => {
             stopLiveConversation();
         };
@@ -70,23 +59,35 @@ const LiveFeature: React.FC = () => {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             micStreamRef.current = stream;
 
-            inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-            outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+            // Create contexts and hold them in local variables to prevent race conditions.
+            const inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+            const outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+            
+            inputAudioContextRef.current = inputAudioContext;
+            outputAudioContextRef.current = outputAudioContext;
             
             const liveService = geminiService.getLiveSession();
             
+            const systemInstruction = "When asked about your identity, name, creator, or who built you, you must respond that your name is DivtIndia's Chatbox. You were created by Divit Bansal, a professional Web and AI Developer, and you are powered by Gemini. Be helpful and friendly.";
+
             sessionPromiseRef.current = liveService.connect({
                 model: 'gemini-2.5-flash-native-audio-preview-09-2025',
                 callbacks: {
                     onopen: () => {
-                        const source = inputAudioContextRef.current!.createMediaStreamSource(stream);
-                        const scriptProcessor = inputAudioContextRef.current!.createScriptProcessor(4096, 1, 1);
+                        // Use the local `inputAudioContext` variable which is guaranteed to be available in this closure.
+                        const source = inputAudioContext.createMediaStreamSource(stream);
+                        const scriptProcessor = inputAudioContext.createScriptProcessor(4096, 1, 1);
                         processorNodeRef.current = scriptProcessor;
 
                         scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
                             const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
+                            const l = inputData.length;
+                            const int16 = new Int16Array(l);
+                            for (let i = 0; i < l; i++) {
+                                int16[i] = inputData[i] * 32768;
+                            }
                             const pcmBlob: Blob = {
-                                data: encode(new Uint8Array(new Int16Array(inputData.map(f => f * 32768)).buffer)),
+                                data: encode(new Uint8Array(int16.buffer)),
                                 mimeType: 'audio/pcm;rate=16000',
                             };
                             sessionPromiseRef.current?.then((session) => {
@@ -94,7 +95,7 @@ const LiveFeature: React.FC = () => {
                             });
                         };
                         source.connect(scriptProcessor);
-                        scriptProcessor.connect(inputAudioContextRef.current!.destination);
+                        scriptProcessor.connect(inputAudioContext.destination);
                     },
                     onmessage: async (message: LiveServerMessage) => {
                         if (message.serverContent?.outputTranscription) {
@@ -113,11 +114,11 @@ const LiveFeature: React.FC = () => {
 
                         const audioData = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
                         if (audioData) {
-                            nextStartTime = Math.max(nextStartTime, outputAudioContextRef.current!.currentTime);
-                            const audioBuffer = await decodeAudioData(decode(audioData), outputAudioContextRef.current!, 24000, 1);
-                            const source = outputAudioContextRef.current!.createBufferSource();
+                            nextStartTime = Math.max(nextStartTime, outputAudioContext.currentTime);
+                            const audioBuffer = await decodeAudioData(decode(audioData), outputAudioContext, 24000, 1);
+                            const source = outputAudioContext.createBufferSource();
                             source.buffer = audioBuffer;
-                            source.connect(outputAudioContextRef.current!.destination);
+                            source.connect(outputAudioContext.destination);
                             source.start(nextStartTime);
                             nextStartTime += audioBuffer.duration;
                         }
@@ -132,6 +133,7 @@ const LiveFeature: React.FC = () => {
                     },
                 },
                 config: {
+                    systemInstruction,
                     responseModalities: [Modality.AUDIO],
                     outputAudioTranscription: {},
                     inputAudioTranscription: {},
@@ -144,85 +146,23 @@ const LiveFeature: React.FC = () => {
         }
     };
 
-
-    const startTranscription = async () => {
-        setError(null);
-        setTranscription('');
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRecorderRef.current = new MediaRecorder(stream);
-            audioChunksRef.current = [];
-
-            mediaRecorderRef.current.ondataavailable = event => {
-                audioChunksRef.current.push(event.data);
-            };
-
-            mediaRecorderRef.current.onstop = async () => {
-                const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-                const audioFile = new File([audioBlob], "recording.webm", { type: "audio/webm" });
-                
-                setIsTranscribing(true);
-                try {
-                    const audioBase64 = await fileToBase64(audioFile);
-                    const response = await geminiService.transcribeAudio(audioBase64, audioFile.type);
-                    setTranscription(response.text);
-                } catch (e: any) {
-                    setError(`Transcription failed: ${e.message}`);
-                } finally {
-                    setIsTranscribing(false);
-                }
-                 // Stop mic stream
-                stream.getTracks().forEach(track => track.stop());
-            };
-
-            mediaRecorderRef.current.start();
-            setIsRecording(true);
-        } catch (e: any) {
-            setError(`Could not start recording: ${e.message}`);
-        }
-    };
-
-    const stopTranscription = () => {
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-            mediaRecorderRef.current.stop();
-            setIsRecording(false);
-        }
-    };
-
     return (
         <div className="h-full flex flex-col bg-slate-800 rounded-lg">
             <div className="p-4 border-b border-slate-700">
-                <div className="flex space-x-2 bg-slate-700 p-1 rounded-lg max-w-xs">
-                    {(['conversation', 'transcribe'] as LiveMode[]).map(m => (
-                        <button key={m} onClick={() => setMode(m)} className={`flex-1 capitalize text-sm py-2 rounded-md transition-colors ${mode === m ? 'bg-indigo-600' : 'hover:bg-slate-600'}`}>{m}</button>
-                    ))}
-                </div>
+                <h2 className="text-xl font-bold">Live Conversation</h2>
             </div>
             <div className="flex-1 p-4 flex flex-col items-center justify-center">
                 <div className="text-center">
-                    {mode === 'conversation' ? (
-                        <button onClick={isRecording ? stopLiveConversation : startLiveConversation} className={`p-4 rounded-full transition-colors ${isRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
-                            {isRecording ? <StopIcon className="w-12 h-12" /> : <MicIcon className="w-12 h-12" />}
-                        </button>
-                    ) : (
-                        <button onClick={isRecording ? stopTranscription : startTranscription} className={`p-4 rounded-full transition-colors ${isRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
-                            {isRecording ? <StopIcon className="w-12 h-12" /> : <MicIcon className="w-12 h-12" />}
-                        </button>
-                    )}
-                    <p className="mt-4 text-slate-400">{isRecording ? "Recording..." : (mode === 'conversation' ? "Start Conversation" : "Start Recording for Transcription")}</p>
-                    {isTranscribing && <p className="mt-2 text-indigo-400 animate-pulse">Transcribing...</p>}
+                    <button onClick={isRecording ? stopLiveConversation : startLiveConversation} className={`p-4 rounded-full transition-colors ${isRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
+                        {isRecording ? <StopIcon className="w-12 h-12" /> : <MicIcon className="w-12 h-12" />}
+                    </button>
+                    <p className="mt-4 text-slate-400">{isRecording ? "Conversation in progress..." : "Start Conversation"}</p>
                 </div>
                 {error && <p className="text-red-400 text-sm mt-4 text-center">{error}</p>}
                 <div className="w-full max-w-2xl mt-8 overflow-y-auto">
-                    {mode === 'transcribe' && transcription && (
+                    {conversationHistory.length > 0 && (
                         <div>
-                            <h3 className="text-lg font-bold mb-2">Transcription:</h3>
-                            <p className="bg-slate-700 p-4 rounded-lg whitespace-pre-wrap">{transcription}</p>
-                        </div>
-                    )}
-                    {mode === 'conversation' && conversationHistory.length > 0 && (
-                        <div>
-                            <h3 className="text-lg font-bold mb-2">Conversation:</h3>
+                            <h3 className="text-lg font-bold mb-2">Conversation History:</h3>
                              {conversationHistory.map((turn, index) => (
                                 <div key={index} className="mb-4">
                                     <p className="text-indigo-400 font-bold">You:</p>

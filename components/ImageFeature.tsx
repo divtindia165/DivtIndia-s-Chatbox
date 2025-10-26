@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { AspectRatio } from '../types';
 import * as geminiService from '../services/geminiService';
 import { fileToBase64 } from '../utils/media';
@@ -17,6 +17,28 @@ const ImageFeature: React.FC = () => {
     const [analysisResult, setAnalysisResult] = useState<string>('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [apiKeySelected, setApiKeySelected] = useState(false);
+
+    useEffect(() => {
+        const checkKey = async () => {
+            if (mode === 'generate' && window.aistudio) {
+                if (await window.aistudio.hasSelectedApiKey()) {
+                    setApiKeySelected(true);
+                } else {
+                    setApiKeySelected(false);
+                }
+            }
+        };
+        checkKey();
+    }, [mode]);
+
+    const handleSelectKey = async () => {
+        if (window.aistudio) {
+            await window.aistudio.openSelectKey();
+            // Assume success to avoid race condition
+            setApiKeySelected(true);
+        }
+    };
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -56,13 +78,30 @@ const ImageFeature: React.FC = () => {
                 setOutputImageUrl(`data:image/png;base64,${editedImageBase64}`);
             }
         } catch (e: any) {
-            setError(e.message || "An error occurred.");
+            if (mode === 'generate' && e.message?.includes("Requested entity was not found.")) {
+                setError("API Key error. Please select a key from a billed project and try again.");
+                setApiKeySelected(false);
+            } else {
+                setError(e.message || "An error occurred.");
+            }
             console.error(e);
         } finally {
             setIsLoading(false);
         }
     };
     
+    if (mode === 'generate' && !apiKeySelected) {
+        return (
+            <div className="h-full flex flex-col items-center justify-center bg-slate-800 rounded-lg p-8 text-center">
+                <h2 className="text-2xl font-bold mb-4">API Key Required for Imagen</h2>
+                <p className="text-slate-400 mb-6 max-w-md">Image generation with Imagen requires you to select an API key from a project with billing enabled.</p>
+                <p className="text-xs text-slate-500 mb-6">Learn more about billing at <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">ai.google.dev/gemini-api/docs/billing</a></p>
+                <button onClick={handleSelectKey} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded-lg transition-colors">Select API Key</button>
+                {error && <p className="text-red-400 text-sm mt-4">{error}</p>}
+            </div>
+        );
+    }
+
     return (
         <div className="h-full flex flex-col bg-slate-800 rounded-lg">
             <div className="p-4 border-b border-slate-700">

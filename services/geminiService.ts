@@ -1,5 +1,4 @@
-
-import { GoogleGenAI, GenerateContentResponse, Modality, Type } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse, Modality, GenerateContentConfig, Tool, LiveSession } from "@google/genai";
 import { AspectRatio } from '../types';
 
 if (!process.env.API_KEY) {
@@ -8,21 +7,21 @@ if (!process.env.API_KEY) {
     console.warn("API_KEY environment variable not set.");
 }
 
+// Instantiate the AI client when needed to ensure the latest API key is used, especially for billable features.
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
 const systemInstruction = "When asked about your identity, name, creator, or who built you, you must respond that your name is DivtIndia's Chatbox. You were created by Divit Bansal, a professional Web and AI Developer, and you are powered by Gemini. Be helpful and friendly.";
 
-
 // --- TEXT & CHAT ---
-export const generateText = async (
+export const generateText = (
     prompt: string,
     model: 'gemini-2.5-flash' | 'gemini-2.5-flash-lite' | 'gemini-2.5-pro',
-    config?: any,
-    tools?: any[]
+    config?: GenerateContentConfig,
+    tools?: Tool[]
 ): Promise<GenerateContentResponse> => {
     const ai = getAI();
-    // FIX: The 'tools' property must be nested inside the 'config' object for the generateContent call.
-    const finalConfig = { ...config };
+    // The tools property must be nested inside the config object.
+    const finalConfig: GenerateContentConfig = { ...config };
     if (tools) {
         finalConfig.tools = tools;
     }
@@ -45,17 +44,15 @@ export const generateImage = async (prompt: string, aspectRatio: AspectRatio): P
             aspectRatio,
         },
     });
+    if (!response.generatedImages?.[0]?.image?.imageBytes) {
+        throw new Error("Image generation failed to return image data.");
+    }
     return response.generatedImages[0].image.imageBytes;
 };
 
-export const analyzeImage = async (prompt: string, imageBase64: string, mimeType: string): Promise<GenerateContentResponse> => {
+export const analyzeImage = (prompt: string, imageBase64: string, mimeType: string): Promise<GenerateContentResponse> => {
     const ai = getAI();
-    const imagePart = {
-        inlineData: {
-            mimeType,
-            data: imageBase64,
-        },
-    };
+    const imagePart = { inlineData: { mimeType, data: imageBase64 } };
     const textPart = { text: prompt };
     return ai.models.generateContent({
         model: 'gemini-2.5-flash',
@@ -74,65 +71,43 @@ export const editImage = async (prompt: string, imageBase64: string, mimeType: s
                 { text: prompt },
             ],
         },
-        config: {
-            responseModalities: [Modality.IMAGE],
-        },
+        config: { responseModalities: [Modality.IMAGE] },
     });
-    const part = response.candidates[0]?.content?.parts[0];
-    if (part && part.inlineData) {
+    const part = response.candidates?.[0]?.content?.parts?.[0];
+    if (part?.inlineData?.data) {
         return part.inlineData.data;
     }
-    throw new Error("No image data in response");
+    throw new Error("Image editing failed to return image data.");
 };
-
 
 // --- VIDEO ---
-export const generateVideoFromText = async (prompt: string, aspectRatio: '16:9' | '9:16') => {
+export const generateVideoFromText = (prompt: string, aspectRatio: '16:9' | '9:16') => {
     const ai = getAI();
     return ai.models.generateVideos({
         model: 'veo-3.1-fast-generate-preview',
         prompt,
-        config: {
-            numberOfVideos: 1,
-            resolution: '720p',
-            aspectRatio,
-        }
+        config: { numberOfVideos: 1, resolution: '720p', aspectRatio }
     });
 };
 
-export const generateVideoFromImage = async (prompt: string, imageBase64: string, mimeType: string, aspectRatio: '16:9' | '9:16') => {
+export const generateVideoFromImage = (prompt: string, imageBase64: string, mimeType: string, aspectRatio: '16:9' | '9:16') => {
     const ai = getAI();
     return ai.models.generateVideos({
         model: 'veo-3.1-fast-generate-preview',
         prompt,
-        image: {
-            imageBytes: imageBase64,
-            mimeType,
-        },
-        config: {
-            numberOfVideos: 1,
-            resolution: '720p',
-            aspectRatio,
-        }
+        image: { imageBytes: imageBase64, mimeType },
+        config: { numberOfVideos: 1, resolution: '720p', aspectRatio }
     });
 };
 
-export const checkVideoOperation = async (operation: any) => {
+export const checkVideoOperation = (operation: any) => {
     const ai = getAI();
     return ai.operations.getVideosOperation({ operation });
 };
 
-export const analyzeVideo = async (prompt: string, videoBase64: string, mimeType: string): Promise<GenerateContentResponse> => {
+export const analyzeVideo = (prompt: string, videoBase64: string, mimeType: string): Promise<GenerateContentResponse> => {
     const ai = getAI();
-    // Note: This sends the whole video at once. For large videos, chunking would be needed.
-    // The Gemini API currently supports videos up to 2GB and 15 mins.
-    // For this example, we assume smaller videos that fit in a single request.
-    const videoPart = {
-        inlineData: {
-            mimeType,
-            data: videoBase64,
-        },
-    };
+    const videoPart = { inlineData: { mimeType, data: videoBase64 } };
     const textPart = { text: prompt };
     return ai.models.generateContent({
         model: 'gemini-2.5-pro',
@@ -150,27 +125,20 @@ export const textToSpeech = async (text: string): Promise<string> => {
         config: {
             responseModalities: [Modality.AUDIO],
             speechConfig: {
-                voiceConfig: {
-                    prebuiltVoiceConfig: { voiceName: 'Kore' },
-                },
+                voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
             },
         },
     });
-    const part = response.candidates[0]?.content?.parts[0];
-    if (part && part.inlineData) {
+    const part = response.candidates?.[0]?.content?.parts?.[0];
+    if (part?.inlineData?.data) {
         return part.inlineData.data;
     }
-    throw new Error("No audio data in response");
+    throw new Error("Text-to-speech failed to return audio data.");
 };
 
-export const transcribeAudio = async (audioBase64: string, mimeType: string): Promise<GenerateContentResponse> => {
+export const transcribeAudio = (audioBase64: string, mimeType: string): Promise<GenerateContentResponse> => {
     const ai = getAI();
-    const audioPart = {
-        inlineData: {
-            mimeType,
-            data: audioBase64,
-        },
-    };
+    const audioPart = { inlineData: { mimeType, data: audioBase64 } };
     const textPart = { text: "Transcribe this audio." };
     return ai.models.generateContent({
         model: 'gemini-2.5-flash',
@@ -178,7 +146,7 @@ export const transcribeAudio = async (audioBase64: string, mimeType: string): Pr
     });
 };
 
-export const getLiveSession = () => {
+export const getLiveSession = (): LiveSession => {
     const ai = getAI();
     return ai.live;
 };

@@ -1,17 +1,17 @@
-
 import React, { useState, useRef } from 'react';
 import * as geminiService from '../services/geminiService';
 import { fileToBase64 } from '../utils/media';
-import { MicIcon, StopIcon } from './common/Icons';
+import { MicIcon, StopIcon, CopyIcon } from './common/Icons';
 
 const TranscriptionFeature: React.FC = () => {
     const [isRecording, setIsRecording] = useState(false);
     const [isTranscribing, setIsTranscribing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [transcription, setTranscription] = useState('');
+    const [isCopied, setIsCopied] = useState(false);
 
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-    const audioChunksRef = useRef<globalThis.Blob[]>([]);
+    const audioChunksRef = useRef<Blob[]>([]);
     const micStreamRef = useRef<MediaStream | null>(null);
 
     const startRecording = async () => {
@@ -58,15 +58,22 @@ const TranscriptionFeature: React.FC = () => {
             setIsRecording(false);
         }
     };
+    
+    const copyTranscription = () => {
+        if (!transcription) return;
+        navigator.clipboard.writeText(transcription);
+        setIsCopied(true);
+        setTimeout(() => setIsCopied(false), 2000);
+    }
 
     return (
-        <div className="h-full flex flex-col bg-slate-800 rounded-lg">
-            <div className="p-4 border-b border-slate-700">
+        <div className="h-full flex flex-col bg-slate-800 rounded-xl">
+            <header className="p-4 border-b border-slate-700">
                  <h2 className="text-xl font-bold">Audio Transcription</h2>
-            </div>
-            <div className="flex-1 p-4 flex flex-col items-center justify-center">
+            </header>
+            <main className="flex-1 p-4 flex flex-col items-center justify-center">
                 <div className="text-center">
-                    <button onClick={isRecording ? stopRecording : startRecording} className={`p-4 rounded-full transition-colors ${isRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
+                    <button onClick={isRecording ? stopRecording : startRecording} className={`p-4 rounded-full transition-colors ${isRecording ? 'bg-red-600 hover:bg-red-700 animate-pulse' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
                         {isRecording ? <StopIcon className="w-12 h-12" /> : <MicIcon className="w-12 h-12" />}
                     </button>
                     <p className="mt-4 text-slate-400">{isRecording ? "Recording..." : "Start Recording"}</p>
@@ -76,12 +83,19 @@ const TranscriptionFeature: React.FC = () => {
                 <div className="w-full max-w-2xl mt-8 overflow-y-auto">
                     {transcription && (
                         <div>
-                            <h3 className="text-lg font-bold mb-2">Result:</h3>
+                            <div className="flex justify-between items-center mb-2">
+                                <h3 className="text-lg font-bold">Result:</h3>
+                                <button onClick={copyTranscription} className="flex items-center text-sm text-indigo-400 hover:text-indigo-300">
+                                    {isCopied ? 'Copied!' : <>
+                                    <CopyIcon className="w-4 h-4 mr-1" /> Copy
+                                    </> }
+                                </button>
+                            </div>
                             <p className="bg-slate-700 p-4 rounded-lg whitespace-pre-wrap">{transcription}</p>
                         </div>
                     )}
                 </div>
-            </div>
+            </main>
         </div>
     );
 };

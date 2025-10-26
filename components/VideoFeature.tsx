@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import * as geminiService from '../services/geminiService';
 import { fileToBase64 } from '../utils/media';
@@ -30,8 +29,8 @@ const VideoFeature: React.FC = () => {
 
     useEffect(() => {
         const checkKey = async () => {
-            if (window.aistudio && await window.aistudio.hasSelectedApiKey()) {
-                setApiKeySelected(true);
+            if (window.aistudio) {
+                setApiKeySelected(await window.aistudio.hasSelectedApiKey());
             }
         };
         checkKey();
@@ -40,8 +39,7 @@ const VideoFeature: React.FC = () => {
     const handleSelectKey = async () => {
         if(window.aistudio) {
             await window.aistudio.openSelectKey();
-            // Assume success to avoid race condition
-            setApiKeySelected(true);
+            setApiKeySelected(true); // Assume success to avoid race condition
         }
     };
     
@@ -85,7 +83,11 @@ const VideoFeature: React.FC = () => {
     };
 
     const handleSubmit = async () => {
-        if (isLoading || !prompt) return;
+        if (isLoading) return;
+        if (!prompt) {
+            setError('Please enter a prompt.');
+            return;
+        }
         if ((mode === 'generate-image' || mode === 'analyze') && !inputFile) {
             setError('Please upload a file.');
             return;
@@ -110,8 +112,10 @@ const VideoFeature: React.FC = () => {
                     const finalOperation = await pollOperation(operation);
                     if (finalOperation?.response?.generatedVideos?.[0]?.video?.uri) {
                         const downloadLink = finalOperation.response.generatedVideos[0].video.uri;
-                        // Appending API key is crucial for access
                         const videoResponse = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
+                        if (!videoResponse.ok) {
+                            throw new Error(`Failed to download video: ${videoResponse.statusText}`);
+                        }
                         const videoBlob = await videoResponse.blob();
                         setOutputVideoUrl(URL.createObjectURL(videoBlob));
                     } else if (finalOperation) {
@@ -139,7 +143,7 @@ const VideoFeature: React.FC = () => {
     
     if (!apiKeySelected && (mode === 'generate-text' || mode === 'generate-image')) {
         return (
-            <div className="h-full flex flex-col items-center justify-center bg-slate-800 rounded-lg p-8 text-center">
+            <div className="h-full flex flex-col items-center justify-center bg-slate-800 rounded-xl p-8 text-center">
                 <h2 className="text-2xl font-bold mb-4">API Key Required for Veo</h2>
                 <p className="text-slate-400 mb-6 max-w-md">Video generation with Veo requires you to select an API key from a project with billing enabled.</p>
                 <p className="text-xs text-slate-500 mb-6">Learn more about billing at <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">ai.google.dev/gemini-api/docs/billing</a></p>
@@ -149,20 +153,20 @@ const VideoFeature: React.FC = () => {
     }
     
     return (
-        <div className="h-full flex flex-col bg-slate-800 rounded-lg">
-            <div className="p-4 border-b border-slate-700">
+        <div className="h-full flex flex-col bg-slate-800 rounded-xl">
+            <header className="p-4 border-b border-slate-700">
                 <div className="flex space-x-2 bg-slate-700 p-1 rounded-lg max-w-md">
                     {(['generate-text', 'generate-image', 'analyze'] as VideoMode[]).map(m => (
                         <button key={m} onClick={() => setMode(m)} className={`flex-1 capitalize text-sm py-2 rounded-md transition-colors ${mode === m ? 'bg-indigo-600' : 'hover:bg-slate-600'}`}>{m.replace('-', ' ')}</button>
                     ))}
                 </div>
-            </div>
-            <div className="flex-1 p-4 overflow-y-auto flex flex-col md:flex-row gap-4">
+            </header>
+            <main className="flex-1 p-4 overflow-y-auto flex flex-col md:flex-row gap-4">
                 <div className="md:w-1/2 flex flex-col gap-4">
                     {(mode === 'generate-image' || mode === 'analyze') && (
                         <div>
                             <label className="block text-sm font-medium text-slate-300 mb-2">Upload {mode === 'generate-image' ? 'Image' : 'Video'}</label>
-                            <input type="file" accept={mode === 'generate-image' ? "image/*" : "video/*"} onChange={handleFileChange} className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"/>
+                            <input type="file" accept={mode === 'generate-image' ? "image/*" : "video/*"} onChange={handleFileChange} className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-slate-700 file:text-indigo-300 hover:file:bg-slate-600"/>
                         </div>
                     )}
                     <div>
@@ -179,7 +183,7 @@ const VideoFeature: React.FC = () => {
                             </div>
                         </div>
                     )}
-                    <button onClick={handleSubmit} disabled={isLoading} className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg transition-colors">
+                    <button onClick={handleSubmit} disabled={isLoading} className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition-colors">
                         {isLoading ? 'Processing...' : 'Submit'}
                     </button>
                     {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
@@ -205,14 +209,14 @@ const VideoFeature: React.FC = () => {
                            {analysisResult && (
                                 <div className="w-full">
                                     <h3 className="text-lg font-bold mb-2">Analysis Result</h3>
-                                    <p className="text-slate-300 whitespace-pre-wrap">{analysisResult}</p>
+                                    <p className="text-slate-300 whitespace-pre-wrap p-2 bg-slate-800 rounded">{analysisResult}</p>
                                 </div>
                            )}
                            {!inputFileUrl && !outputVideoUrl && !analysisResult && <p className="text-slate-500">Output will appear here</p>}
                         </>
                     )}
                 </div>
-            </div>
+            </main>
         </div>
     );
 };

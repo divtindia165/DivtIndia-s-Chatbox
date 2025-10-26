@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import * as geminiService from '../services/geminiService';
 import { encode, decode, decodeAudioData } from '../utils/media';
@@ -11,31 +10,28 @@ const LiveFeature: React.FC = () => {
     const [conversationHistory, setConversationHistory] = useState<{user: string, model: string}[]>([]);
     
     const sessionPromiseRef = useRef<Promise<any> | null>(null);
-    const inputAudioContextRef = useRef<AudioContext | null>(null);
-    const outputAudioContextRef = useRef<AudioContext | null>(null);
-    const micStreamRef = useRef<MediaStream | null>(null);
-    const processorNodeRef = useRef<ScriptProcessorNode | null>(null);
+    const audioResourcesRef = useRef<{
+        inputCtx: AudioContext;
+        outputCtx: AudioContext;
+        stream: MediaStream;
+        processor: ScriptProcessorNode;
+    } | null>(null);
 
     const stopLiveConversation = useCallback(() => {
         if (sessionPromiseRef.current) {
-            sessionPromiseRef.current.then(session => session.close());
+            sessionPromiseRef.current.then(session => session.close()).catch(console.error);
             sessionPromiseRef.current = null;
         }
-        if (processorNodeRef.current) {
-            processorNodeRef.current.disconnect();
-            processorNodeRef.current = null;
-        }
-        if(micStreamRef.current) {
-            micStreamRef.current.getTracks().forEach(track => track.stop());
-            micStreamRef.current = null;
-        }
-        if(inputAudioContextRef.current && inputAudioContextRef.current.state !== 'closed'){
-            inputAudioContextRef.current.close().catch(console.error);
-            inputAudioContextRef.current = null;
-        }
-        if(outputAudioContextRef.current && outputAudioContextRef.current.state !== 'closed'){
-            outputAudioContextRef.current.close().catch(console.error);
-            outputAudioContextRef.current = null;
+        if (audioResourcesRef.current) {
+            audioResourcesRef.current.processor?.disconnect();
+            audioResourcesRef.current.stream?.getTracks().forEach(track => track.stop());
+            if (audioResourcesRef.current.inputCtx?.state !== 'closed') {
+                audioResourcesRef.current.inputCtx.close().catch(console.error);
+            }
+            if (audioResourcesRef.current.outputCtx?.state !== 'closed') {
+                audioResourcesRef.current.outputCtx.close().catch(console.error);
+            }
+            audioResourcesRef.current = null;
         }
         setIsRecording(false);
     }, []);
@@ -47,6 +43,7 @@ const LiveFeature: React.FC = () => {
     }, [stopLiveConversation]);
 
     const startLiveConversation = async () => {
+        if (isRecording) return;
         setError(null);
         setIsRecording(true);
         setConversationHistory([]);
@@ -57,14 +54,8 @@ const LiveFeature: React.FC = () => {
         
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            micStreamRef.current = stream;
-
-            // Create contexts and hold them in local variables to prevent race conditions.
             const inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
             const outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-            
-            inputAudioContextRef.current = inputAudioContext;
-            outputAudioContextRef.current = outputAudioContext;
             
             const liveService = geminiService.getLiveSession();
             
@@ -74,10 +65,15 @@ const LiveFeature: React.FC = () => {
                 model: 'gemini-2.5-flash-native-audio-preview-09-2025',
                 callbacks: {
                     onopen: () => {
-                        // Use the local `inputAudioContext` variable which is guaranteed to be available in this closure.
                         const source = inputAudioContext.createMediaStreamSource(stream);
                         const scriptProcessor = inputAudioContext.createScriptProcessor(4096, 1, 1);
-                        processorNodeRef.current = scriptProcessor;
+                        
+                        audioResourcesRef.current = {
+                            inputCtx: inputAudioContext,
+                            outputCtx: outputAudioContext,
+                            stream: stream,
+                            processor: scriptProcessor,
+                        };
 
                         scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
                             const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
@@ -113,23 +109,24 @@ const LiveFeature: React.FC = () => {
                         }
 
                         const audioData = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
-                        if (audioData) {
-                            nextStartTime = Math.max(nextStartTime, outputAudioContext.currentTime);
-                            const audioBuffer = await decodeAudioData(decode(audioData), outputAudioContext, 24000, 1);
-                            const source = outputAudioContext.createBufferSource();
+                        if (audioData && audioResourcesRef.current) {
+                            const outCtx = audioResourcesRef.current.outputCtx;
+                            nextStartTime = Math.max(nextStartTime, outCtx.currentTime);
+                            const audioBuffer = await decodeAudioData(decode(audioData), outCtx, 24000, 1);
+                            const source = outCtx.createBufferSource();
                             source.buffer = audioBuffer;
-                            source.connect(outputAudioContext.destination);
+                            source.connect(outCtx.destination);
                             source.start(nextStartTime);
                             nextStartTime += audioBuffer.duration;
                         }
                     },
                     onerror: (e: any) => {
-                        setError(`Live connection error: ${e.message}`);
+                        setError(`Live connection error: ${e.message || 'An unknown error occurred'}`);
                         console.error(e);
                         stopLiveConversation();
                     },
                     onclose: () => {
-                       // Handled by user action or error
+                       stopLiveConversation();
                     },
                 },
                 config: {
@@ -147,13 +144,13 @@ const LiveFeature: React.FC = () => {
     };
 
     return (
-        <div className="h-full flex flex-col bg-slate-800 rounded-lg">
-            <div className="p-4 border-b border-slate-700">
+        <div className="h-full flex flex-col bg-slate-800 rounded-xl">
+            <header className="p-4 border-b border-slate-700">
                 <h2 className="text-xl font-bold">Live Conversation</h2>
-            </div>
-            <div className="flex-1 p-4 flex flex-col items-center justify-center">
+            </header>
+            <main className="flex-1 p-4 flex flex-col items-center justify-center">
                 <div className="text-center">
-                    <button onClick={isRecording ? stopLiveConversation : startLiveConversation} className={`p-4 rounded-full transition-colors ${isRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
+                    <button onClick={isRecording ? stopLiveConversation : startLiveConversation} className={`p-4 rounded-full transition-colors ${isRecording ? 'bg-red-600 hover:bg-red-700 animate-pulse' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
                         {isRecording ? <StopIcon className="w-12 h-12" /> : <MicIcon className="w-12 h-12" />}
                     </button>
                     <p className="mt-4 text-slate-400">{isRecording ? "Conversation in progress..." : "Start Conversation"}</p>
@@ -161,10 +158,10 @@ const LiveFeature: React.FC = () => {
                 {error && <p className="text-red-400 text-sm mt-4 text-center">{error}</p>}
                 <div className="w-full max-w-2xl mt-8 overflow-y-auto">
                     {conversationHistory.length > 0 && (
-                        <div>
+                        <div className="space-y-4">
                             <h3 className="text-lg font-bold mb-2">Conversation History:</h3>
                              {conversationHistory.map((turn, index) => (
-                                <div key={index} className="mb-4">
+                                <div key={index} className="border-b border-slate-700 pb-2">
                                     <p className="text-indigo-400 font-bold">You:</p>
                                     <p className="bg-slate-700 p-2 rounded-lg mb-2">{turn.user || "..."}</p>
                                     <p className="text-teal-400 font-bold">Model:</p>
@@ -174,7 +171,7 @@ const LiveFeature: React.FC = () => {
                         </div>
                     )}
                 </div>
-            </div>
+            </main>
         </div>
     );
 };

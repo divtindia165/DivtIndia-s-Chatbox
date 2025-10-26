@@ -1,4 +1,3 @@
-
 export enum Feature {
   CHAT = 'Chat',
   IMAGE = 'Image Tools',
@@ -15,7 +14,7 @@ export enum Role {
 export interface ChatMessage {
     role: Role;
     text: string;
-    sources?: any[];
+    sources?: GroundingChunk[];
 }
 
 export type AspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4";

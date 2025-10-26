@@ -1,0 +1,7 @@
+{
+  "name": "DivtIndia's Chatbox",
+  "description": "Made By Best Developer Divit Bansal.An advanced AI chatbox integrating a comprehensive suite of Gemini features including text, image, video, and real-time audio capabilities for a versatile and powerful user experience.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
